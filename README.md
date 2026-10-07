@@ -1,9 +1,12 @@
 # timelineMap — weekly Discord timeline digest
 
 Reads a project timeline from **Google Sheets** or **Excel/CSV**, finds what's coming up, and posts a
-weekly digest to a Discord channel through a webhook. If an Anthropic API key is set, **Claude**
-writes the digest: a short summary of what matters this week, plus flags for risks and deadline clusters.
-Without a key it posts a clean, plain list instead.
+weekly digest to a Discord channel through a webhook. You choose who writes the digest:
+
+- **Code only**: a clean, plain list. Free, no AI and no extra accounts.
+- **A free AI model**: GitHub Models, Google Gemini, Groq, or a local Ollama model. It adds a short
+  summary of what matters this week and flags risks and deadline clusters.
+- **Claude** (paid): the same kind of summary, written by Anthropic's Claude.
 
 Each digest has four sections:
 
@@ -43,12 +46,11 @@ set `DAY_FIRST=true`. See `examples/sample_timeline.xlsx` for a working sheet.
 ## 2. Run it every week with GitHub Actions (no server needed)
 
 1. In GitHub, open **Settings → Secrets and variables → Actions** for this repo.
-2. Under **Secrets**, add:
-   - `DISCORD_WEBHOOK_URL`: your Discord webhook URL
-   - `ANTHROPIC_API_KEY` (optional): turns on the Claude-written digest
+2. Under **Secrets**, add `DISCORD_WEBHOOK_URL`: your Discord webhook URL.
 3. Under **Variables**, add:
    - `TIMELINE_SOURCE`: your Google Sheets link or file path
-   - optionally `PROJECT_NAME`, `TIMEZONE` (default `America/New_York`), `LOOKAHEAD_DAYS`, `SKIP_IF_EMPTY`, `DAY_FIRST`
+   - optionally `AI_PROVIDER` (see the next section; default `github`), `PROJECT_NAME`,
+     `TIMEZONE` (default `America/New_York`), `LOOKAHEAD_DAYS`, `SKIP_IF_EMPTY`, `DAY_FIRST`
 4. Open **Actions → Weekly timeline digest → Run workflow**. Tick *dry run* to preview the digest in
    the log, or leave it unticked to post right away.
 
@@ -68,14 +70,27 @@ python -m timeline_notifier --today 2026-10-12 --dry-run  # pretend it's another
 python -m timeline_notifier                            # post to Discord
 ```
 
-Flags: `--source <link-or-path>`, `--dry-run`, `--no-ai`, `--today YYYY-MM-DD`.
+Flags: `--source <link-or-path>`, `--dry-run`, `--ai none|github|gemini|groq|ollama|openai|claude|auto`, `--today YYYY-MM-DD`.
 
-## How the AI part works
+## Choosing code only, free AI, or Claude
 
-`timeline_notifier/summarizer.py` sends only the events in the digest window, as JSON, to Claude
-(`claude-opus-5-5` at low effort; override it with `CLAUDE_MODEL`). Claude is told to use only those
-facts and never to invent events. If the API key is missing, the call fails, or the request is
-declined, the tool falls back to the plain list, so the weekly post always goes out.
+Set the `AI_PROVIDER` variable (or pass `--ai <name>` on the command line):
+
+| `AI_PROVIDER` | Cost | What you need |
+|---|---|---|
+| `none` | Free | Nothing. Code only: a plain list grouped by week. |
+| `github` *(default in Actions)* | Free, with daily limits | Nothing extra in GitHub Actions: the workflow's built-in token is used. For local runs, set `GITHUB_TOKEN` to a personal access token with **Models: read**. Default model: `openai/gpt-4.1-mini`. |
+| `gemini` | Free tier | A key from [Google AI Studio](https://aistudio.google.com/apikey), saved as the `GEMINI_API_KEY` secret. Default model: `gemini-2.5-flash`. On the free tier, Google may use prompts to improve its products. |
+| `groq` | Free tier | A key from [console.groq.com](https://console.groq.com/keys), saved as the `GROQ_API_KEY` secret. Default model: `llama-3.3-70b-versatile`. |
+| `ollama` | Free (runs locally) | Local runs only: install [Ollama](https://ollama.com) and run `ollama pull llama3.2`. |
+| `openai` | Varies | Any OpenAI-compatible endpoint: set `AI_BASE_URL`, `AI_API_KEY` and `AI_MODEL`. |
+| `claude` | Paid | An `ANTHROPIC_API_KEY` secret. Uses `claude-opus-5-5`; override it with `CLAUDE_MODEL`. |
+| `auto` *(default locally)* | Varies | Claude if its key is set, then Gemini or Groq if a key is set, otherwise code only. |
+
+To change the model, set `AI_MODEL`. The AI only sees the events in the digest window, sent as JSON,
+and is told never to invent events, dates or owners. **If anything goes wrong** (a missing key, a
+rate limit, an outage), the tool posts the code-only list instead, so the weekly post always goes
+out. The message footer shows which writer was used.
 
 ## Development
 

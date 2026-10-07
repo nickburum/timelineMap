@@ -11,6 +11,10 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+  models: read # lets the built-in GITHUB_TOKEN call the free GitHub Models API
+
 jobs:
   digest:
     runs-on: ubuntu-latest
@@ -24,6 +28,12 @@ jobs:
       - name: Post digest
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # Who writes the digest: github (free, default) | gemini | groq | claude | none (code only)
+          AI_PROVIDER: ${{ vars.AI_PROVIDER || 'github' }}
+          AI_MODEL: ${{ vars.AI_MODEL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TIMELINE_SOURCE: ${{ vars.TIMELINE_SOURCE || 'examples/sample_timeline.xlsx' }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}

@@ -81,3 +81,52 @@ def test_end_to_end_posts_to_webhook(monkeypatch):
     assert len(sent) == 1
     desc = sent[0][1]["embeds"][0]["description"]
     assert "Prototype demo" in desc and "Requirements sign-off" in desc
+
+
+def _sample_digest():
+    return build_digest(parse_events(pd.read_csv(SAMPLE)), today=date(2026, 10, 7))
+
+
+def test_resolve_provider(monkeypatch):
+    from timeline_notifier.summarizer import resolve_provider
+
+    for var in ("AI_PROVIDER", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GEMINI_API_KEY", "GROQ_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    assert resolve_provider() == "none"
+    monkeypatch.setenv("GROQ_API_KEY", "k")
+    assert resolve_provider() == "groq"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    assert resolve_provider() == "claude"
+    assert resolve_provider("github") == "github"
+    monkeypatch.setenv("AI_PROVIDER", "none")
+    assert resolve_provider() == "none"
+
+
+def test_free_provider_request_and_fallback(monkeypatch):
+    from timeline_notifier import summarizer
+
+    calls = []
+
+    class Resp:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": "FREE AI DIGEST"}}]}
+
+    monkeypatch.setattr(summarizer.requests, "post", lambda url, **kw: calls.append((url, kw)) or Resp())
+    monkeypatch.setenv("GITHUB_TOKEN", "ghs_test")
+    monkeypatch.delenv("AI_MODEL", raising=False)
+    monkeypatch.delenv("AI_BASE_URL", raising=False)
+    monkeypatch.delenv("AI_API_KEY", raising=False)
+    text, label = summarizer.ai_summary(_sample_digest(), provider="github")
+    assert text == "FREE AI DIGEST" and label == "GitHub Models (openai/gpt-4.1-mini)"
+    url, kw = calls[0]
+    assert url == "https://models.github.ai/inference/chat/completions"
+    assert kw["headers"]["Authorization"] == "Bearer ghs_test"
+    assert "Prototype demo" in kw["json"]["messages"][1]["content"]
+
+    # Missing key or a failing API means code-only output, never a crash
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    assert summarizer.ai_summary(_sample_digest(), provider="gemini") is None
+    monkeypatch.setattr(summarizer.requests, "post", lambda url, **kw: (_ for _ in ()).throw(ConnectionError("down")))
+    assert summarizer.ai_summary(_sample_digest(), provider="github") is None

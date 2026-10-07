@@ -41,7 +41,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source", default=os.environ.get("TIMELINE_SOURCE"), help="Sheets URL or .xlsx/.csv path")
     parser.add_argument("--dry-run", action="store_true", default=_env_flag("DRY_RUN"), help="Print instead of posting")
     parser.add_argument("--today", help="Override today's date (YYYY-MM-DD), useful for testing")
-    parser.add_argument("--no-ai", action="store_true", default=_env_flag("DISABLE_AI"), help="Skip the Claude summary")
+    parser.add_argument(
+        "--ai",
+        default=os.environ.get("AI_PROVIDER", "auto"),
+        help="Who writes the digest: none (code only), github, gemini, groq, ollama, openai, claude, auto",
+    )
+    parser.add_argument("--no-ai", action="store_true", default=_env_flag("DISABLE_AI"), help="Same as --ai none")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -73,9 +78,13 @@ def main(argv: list[str] | None = None) -> int:
         logging.info("Nothing upcoming and SKIP_IF_EMPTY is set; not posting")
         return 0
 
-    body = None if (args.no_ai or digest.is_empty) else ai_summary(digest, project)
-    footer = "Summarised by Claude from the timeline" if body else "From the timeline spreadsheet"
-    body = body or render_plain(digest)
+    provider = "none" if args.no_ai else args.ai
+    result = None if digest.is_empty else ai_summary(digest, project, provider)
+    if result:
+        body, writer = result
+        footer = f"Summarised by {writer} from the timeline"
+    else:
+        body, footer = render_plain(digest), "From the timeline spreadsheet"
     title = f"🗓️ {project + ' — ' if project else ''}Week of {today.strftime('%b %-d, %Y')}"
     payloads = discord.build_payloads(title, body, footer, os.environ.get("BOT_NAME", "Timeline Bot"))
 
