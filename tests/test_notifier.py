@@ -152,3 +152,64 @@ def test_empty_folder_skips_without_posting(tmp_path, monkeypatch):
     monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.test/webhook")
     monkeypatch.setattr(discord.requests, "post", lambda *a, **k: pytest.fail("should not post"))
     assert main(["--source", str(tmp_path)]) == 0
+
+
+GRID = Path(__file__).parent.parent / "examples" / "sample_grid_timeline.xlsx"
+
+
+def test_grid_timeline_xlsx():
+    from timeline_notifier.grid import parse_sheet
+    from timeline_notifier.loader import load_sheets
+
+    events = parse_sheet(load_sheets(str(GRID))[0], today=date(2026, 10, 12))
+    assert all(e.date.year == 2026 and e.date.month >= 8 for e in events)  # hidden "May" columns ignored
+    phases = {e.name: (e.date, e.end) for e in events if e.category == "Phase"}
+    assert phases["PRE PRODUCTION"] == (date(2026, 8, 23), date(2026, 10, 10))
+    assert phases["ALPHA PHASE"] == (date(2026, 10, 11), date(2026, 12, 12))
+    fall = [e for e in events if e.name == "Fall Break!"]
+    assert len(fall) == 1 and fall[0].owner == "Everyone"  # merged down the column = one team event
+    boss = next(e for e in events if e.name == "Boss Textures")
+    assert (boss.owner, boss.category, boss.date, boss.end) == ("Ava", "Art", date(2026, 10, 18), date(2026, 10, 24))
+    assert not any(e.name.startswith("Week ") for e in events)
+
+    d = build_digest(events, today=date(2026, 10, 12))
+    assert {e.name for e in d.in_progress} == {"ALPHA PHASE", "Dev Begins", "Fall Break!"}
+    assert len(d.this_week) == 5
+
+
+def test_grid_csv_without_merge_info_and_year_rollover():
+    from timeline_notifier.grid import parse_sheet
+    from timeline_notifier.loader import _csv_sheet
+
+    csv_text = "\n".join([
+        ",,Nov 29,Dec 6,Dec 13,Dec 20,Jan 3,Jan 10",
+        ",,ALPHA,,,,BETA,",
+        ",,,Playtest,,,,Launch",
+        "Team,Name,Week 1,Week 2,Week 3,Week 4,Week 5,Week 6",
+        "Art,Ava,Boss,Textures,,,Polish,",
+        ",Ben,VFX,,,,,",
+    ])
+    events = parse_sheet(_csv_sheet(csv_text), today=date(2026, 12, 1))
+    by_name = {e.name: e for e in events}
+    assert by_name["ALPHA"].end == date(2027, 1, 2)  # phase runs until the next phase starts
+    assert by_name["BETA"].date == date(2027, 1, 3)  # Dec -> Jan rolls into the next year
+    assert by_name["Launch"].category == "Milestone"
+    assert by_name["Polish"].owner == "Ava" and by_name["VFX"].owner == "Ben"
+    assert by_name["Textures"].date == date(2026, 12, 6)
+
+
+def test_list_layout_with_title_rows_above_header():
+    from timeline_notifier.grid import parse_sheet
+    from timeline_notifier.loader import _csv_sheet
+
+    sheet = _csv_sheet("My Project Plan,,\n,,\nTask,Due Date,Owner\nShip it,2026-10-20,Sam\n")
+    events = parse_sheet(sheet, today=date(2026, 10, 12))
+    assert [(e.name, e.date, e.owner) for e in events] == [("Ship it", date(2026, 10, 20), "Sam")]
+
+
+def test_unreadable_sheet_explains_both_layouts():
+    from timeline_notifier.grid import parse_sheet
+    from timeline_notifier.loader import _csv_sheet
+
+    with pytest.raises(ValueError, match="weekly grid"):
+        parse_sheet(_csv_sheet("foo,bar\n1,2\n"), today=date(2026, 10, 12))

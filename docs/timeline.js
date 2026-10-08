@@ -120,6 +120,187 @@
     return d;
   }
 
+
+  // ---- Week-by-week grids: dates across the top, one row per person (mirrors timeline_notifier/grid.py) ----
+  const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+  const MONTH_DAY = /^([a-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?$/i;
+  const DAY_MONTH = /^(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]{3,9})\.?(?:,?\s+(\d{4}))?$/i;
+  const WEEK_LABEL = /^(week|wk|sprint)\s*#?\s*\d+$/i;
+  const NAME_HEADERS = new Set(["name", "names", "owner", "person", "assignee", "who", "member", "teammember", "people"]);
+  const TRACK_HEADERS = new Set(["track", "focus", "trackfocus", "role", "team", "discipline", "department", "category", "group", "area"]);
+
+  function headerDate(value, dayFirst) {
+    if (value instanceof Date) { const d = toDate(value); return d ? [d.getMonth() + 1, d.getDate(), d.getFullYear()] : null; }
+    const s = text(value);
+    if (!s) return null;
+    let m = s.match(MONTH_DAY);
+    if (m && MONTHS[m[1].slice(0, 3).toLowerCase()]) return [MONTHS[m[1].slice(0, 3).toLowerCase()], +m[2], m[3] ? +m[3] : null];
+    m = s.match(DAY_MONTH);
+    if (m && MONTHS[m[2].slice(0, 3).toLowerCase()]) return [MONTHS[m[2].slice(0, 3).toLowerCase()], +m[1], m[3] ? +m[3] : null];
+    if (/^\d{4}-\d{1,2}-\d{1,2}$|^\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}$/.test(s) || typeof value === "number") {
+      const d = toDate(value, dayFirst);
+      if (d) return [d.getMonth() + 1, d.getDate(), d.getFullYear()];
+    }
+    return null;
+  }
+
+  // Year-less dates get the year that keeps the schedule continuous (the first one nearest today).
+  function resolveYears(parts, today) {
+    let anchor = today;
+    return parts.map(([month, day, year]) => {
+      const options = year ? [year] : [anchor.getFullYear() - 1, anchor.getFullYear(), anchor.getFullYear() + 1];
+      const cands = options.map((y) => ymd(y, month, day)).filter(Boolean);
+      if (!cands.length) return null;
+      const best = cands.reduce((a, b) => (Math.abs(b - anchor) < Math.abs(a - anchor) ? b : a));
+      anchor = best;
+      return best;
+    });
+  }
+
+  /** grid: array of row arrays. layout: { merges: [[r0,c0,r1,c1]], hiddenRows: Set, hiddenCols: Set } */
+  function parseGrid(grid, layout, today, dayFirst) {
+    const merges = layout.merges || [];
+    const hiddenRows = layout.hiddenRows || new Set();
+    const hiddenCols = layout.hiddenCols || new Set();
+    const ncols = Math.max(0, ...grid.map((r) => r.length));
+    const cell = (r, c) => (grid[r] && grid[r][c] !== undefined ? grid[r][c] : null);
+    const visCols = [...Array(ncols).keys()].filter((c) => !hiddenCols.has(c));
+    const visRows = [...grid.keys()].filter((r) => !hiddenRows.has(r));
+
+    let best = null;
+    for (const r of visRows.slice(0, 25)) {
+      const found = [];
+      for (const c of visCols) { const d = headerDate(cell(r, c), dayFirst); if (d) found.push([c, d]); }
+      if (found.length >= 3 && (!best || found.length > best[1].length)) best = [r, found];
+    }
+    if (!best) throw new Error("no row of dates found");
+    const [dateRow, found] = best;
+    const resolved = resolveYears(found.map(([, d]) => d), today);
+    const colDate = new Map();
+    found.forEach(([c], i) => { if (resolved[i]) colDate.set(c, resolved[i]); });
+    const dateCols = [...colDate.keys()].sort((a, b) => a - b);
+    const colEnd = new Map();
+    dateCols.forEach((c, i) => {
+      const next = i + 1 < dateCols.length ? colDate.get(dateCols[i + 1]) : null;
+      const gap = next ? daysBetween(colDate.get(c), next) : 7;
+      colEnd.set(c, addDays(colDate.get(c), gap >= 1 && gap <= 31 ? gap - 1 : 6));
+    });
+
+    const labelCols = visCols.filter((c) => c < dateCols[0]);
+    let headerRow = null, nameCol = null, trackCol = null;
+    for (const r of visRows) {
+      if (r <= dateRow) continue;
+      const labels = labelCols.map((c) => [c, norm(text(cell(r, c)))]);
+      if (labels.some(([, v]) => NAME_HEADERS.has(v) || TRACK_HEADERS.has(v))) {
+        headerRow = r;
+        nameCol = (labels.find(([, v]) => NAME_HEADERS.has(v)) || [null])[0];
+        trackCol = (labels.find(([c, v]) => TRACK_HEADERS.has(v) && c !== nameCol) || [null])[0];
+        break;
+      }
+    }
+    if (labelCols.length && nameCol === null) {
+      nameCol = labelCols[labelCols.length - 1];
+      trackCol = labelCols.length > 1 ? labelCols[0] : null;
+    }
+
+    const mergeAt = new Map();
+    const covered = new Set();
+    for (const m of merges) {
+      const [r0, c0, r1, c1] = m;
+      mergeAt.set(`${r0},${c0}`, m);
+      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (r !== r0 || c !== c0) covered.add(`${r},${c}`);
+    }
+    const label = (r, c) => {
+      if (c === null) return "";
+      for (const [r0, c0, r1, c1] of merges) {
+        if (r0 < r && r <= r1 && c0 <= c && c <= c1 && r0 > dateRow) return text(cell(r0, c0));
+      }
+      return text(cell(r, c));
+    };
+
+    const firstBody = (headerRow !== null ? headerRow : dateRow) + 1;
+    const personRows = visRows.filter((r) => r >= firstBody && nameCol !== null && label(r, nameCol));
+    const personSet = new Set(personRows);
+    const bannerRows = visRows.filter((r) => (dateRow < r && r < firstBody) || (r >= firstBody && !personSet.has(r)));
+    const span = (r, c, allowedRows) => {
+      const m = mergeAt.get(`${r},${c}`);
+      return [
+        dateCols.filter((dc) => c <= dc && dc <= (m ? m[3] : c)),
+        allowedRows.filter((rr) => r <= rr && rr <= (m ? m[2] : r)),
+      ];
+    };
+    const blank = { status: "", owner: "", category: "", notes: "" };
+    const events = [];
+    const hasMerges = merges.length > 0;
+
+    bannerRows.forEach((r, i) => {
+      const cells = dateCols
+        .filter((c) => !covered.has(`${r},${c}`) && text(cell(r, c)) && !WEEK_LABEL.test(text(cell(r, c))))
+        .map((c) => [c, text(cell(r, c))]);
+      if (!cells.length) return;
+      const wide = cells.some(([c]) => span(r, c, [r])[0].length > 1);
+      // Without merge info (CSV), treat a sparse first banner row as phases that run until the next one.
+      const guessPhases = !hasMerges && i === 0 && r < firstBody && cells.length <= dateCols.length / 2;
+      cells.forEach(([c, t], j) => {
+        if (wide || guessPhases) {
+          let cols;
+          if (hasMerges) cols = span(r, c, [r])[0];
+          else {
+            const next = j + 1 < cells.length ? cells[j + 1][0] : null;
+            cols = dateCols.filter((dc) => c <= dc && (next === null || dc < next));
+          }
+          events.push({ ...blank, name: t, date: colDate.get(c), end: colEnd.get(cols[cols.length - 1]), category: "Phase" });
+        } else {
+          events.push({ ...blank, name: t, date: colDate.get(c), end: colEnd.get(c), category: "Milestone" });
+        }
+      });
+    });
+
+    for (const r of personRows) {
+      for (const c of dateCols) {
+        const t = text(cell(r, c));
+        if (covered.has(`${r},${c}`) || !t) continue;
+        const [cols, rws] = span(r, c, personRows);
+        const names = rws.map((rr) => label(rr, nameCol));
+        const tracks = [...new Set(rws.map((rr) => label(rr, trackCol)).filter(Boolean))].sort();
+        const wholeTeam = rws.length > 1 && rws.length === personRows.length;
+        events.push({
+          ...blank,
+          name: t,
+          date: colDate.get(c),
+          end: colEnd.get(cols[cols.length - 1]),
+          owner: wholeTeam ? "Everyone" : names.join(", "),
+          category: wholeTeam ? "" : tracks.join(" / "),
+        });
+      }
+    }
+    events.sort((a, b) => a.date - b.date);
+    return { events, columns: { layout: "grid" } };
+  }
+
+  /** Read either layout: a list (one event per row with Name/Date headers) or a week-by-week grid. */
+  function parseSheet(grid, layout, opts = {}) {
+    layout = layout || {};
+    const hiddenRows = layout.hiddenRows || new Set();
+    const visRows = [...grid.keys()].filter((r) => !hiddenRows.has(r));
+    for (const r of visRows.slice(0, 10)) {
+      const headers = (grid[r] || []).map((h) => text(h));
+      try { detectColumns(headers); } catch { continue; }
+      const rows = visRows.filter((rr) => rr > r).map((rr) => {
+        const obj = {};
+        headers.forEach((h, c) => { if (h) obj[h] = grid[rr][c] === undefined ? "" : grid[rr][c]; });
+        return obj;
+      });
+      return parseEvents(rows, opts);
+    }
+    try {
+      return parseGrid(grid, layout, opts.today || new Date(), opts.dayFirst);
+    } catch {
+      throw new Error("Couldn't read this timeline. Use either a list (one event per row, with columns like " +
+        "\"Milestone\" and \"Date\") or a weekly grid (week dates across the top row, one row per person).");
+    }
+  }
+
   const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const MO = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const fmt = (d) => `${WD[d.getDay()]} ${MO[d.getMonth()]} ${d.getDate()}`;
@@ -144,11 +325,34 @@
     return out;
   }
 
+  function compact(ev) {
+    return `• **${ev.owner}**${ev.category ? ` (${ev.category})` : ""}: ${ev.name}${ev.status ? ` · ${ev.status}` : ""}`;
+  }
+
+  // Events in date order; when 3+ people's tasks share the same dates, list them under one heading.
+  function sectionLines(items, today) {
+    const ordered = [...items].sort((a, b) => a.date - b.date || (a.end || a.date) - (b.end || b.date));
+    const lines = [];
+    let i = 0;
+    while (i < ordered.length) {
+      const key = (e) => `${+e.date}|${e.end ? +e.end : ""}`;
+      const group = [];
+      const k = key(ordered[i]);
+      while (i < ordered.length && key(ordered[i]) === k) group.push(ordered[i++]);
+      const assigned = group.filter((e) => e.owner);
+      if (assigned.length < 3) { group.forEach((e) => lines.push(line(e, today))); continue; }
+      group.filter((e) => !e.owner).forEach((e) => lines.push(line(e, today)));
+      lines.push(`__${when(assigned[0], today)}__`);
+      assigned.forEach((e) => lines.push(compact(e)));
+    }
+    return lines;
+  }
+
   function sections(digest) {
     return [
+      ["⏳ Happening now", digest.inProgress],
       ["📅 Next 7 days", digest.thisWeek],
       [`🔭 Later (up to ${digest.lookaheadDays} days out)`, digest.later],
-      ["⏳ In progress", digest.inProgress],
       ["⚠️ Overdue / needs attention", digest.overdue],
     ];
   }
@@ -156,7 +360,7 @@
   function renderPlain(digest) {
     const out = sections(digest)
       .filter(([, items]) => items.length)
-      .map(([title, items]) => `**${title}**\n` + items.map((e) => line(e, digest.today)).join("\n"));
+      .map(([title, items]) => `**${title}**\n` + sectionLines(items, digest.today).join("\n"));
     return out.length ? out.join("\n\n") : `Nothing scheduled in the next ${digest.lookaheadDays} days. 🎉`;
   }
 
@@ -195,7 +399,7 @@
   }
 
   const api = {
-    detectColumns, toDate, parseEvents, buildDigest, renderPlain, sections, line, when,
+    detectColumns, toDate, parseEvents, parseGrid, parseSheet, buildDigest, renderPlain, sections, line, when,
     chunkText, discordPayloads, digestTitle, googleSheetCsvUrl, fmt,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

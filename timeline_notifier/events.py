@@ -106,6 +106,9 @@ def _to_date(value, dayfirst: bool) -> date | None:
     return None if pd.isna(ts) else ts.date()
 
 
+to_date = _to_date
+
+
 def _text(value) -> str:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return ""

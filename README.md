@@ -38,7 +38,36 @@ Each digest has four sections:
 
 ## 1. Set up your spreadsheet
 
-Use one row per event or milestone. Column names are detected automatically. Any of these work:
+Two layouts work, and the tool works out which one you're using.
+
+### Weekly grid (team schedule)
+
+Week dates run across the top row, with one row per person and that week's task in each cell:
+
+|       |      | Aug 23 | Aug 30 | … | Oct 11 |
+|---|---|---|---|---|---|
+|       |      | PRE PRODUCTION *(merged across weeks)* | | | ALPHA PHASE |
+|       |      |  | Pitch Day! | | Dev Begins |
+| **Track / Focus** | **Name** | Week 1 | Week 2 | | Week 8 |
+| Art | Ava | Ideation | Art style | | Fall Break! *(merged down)* |
+
+- **Dates** can be written without a year (`August 23`, `November 1st`); the year is worked out
+  automatically, including schedules that run past New Year.
+- **Phase banners** (cells merged across several weeks) are reported as phases with a start and end.
+- **Other cells above the name header** (e.g. *Pitch Day!*, *Playtest*) are milestones.
+  `Week 1` labels are ignored.
+- **Each person's cell** becomes their task for that week. A cell merged down the whole team
+  (e.g. *Fall Break!*) is reported once, for everyone.
+- **Hidden rows and columns are skipped**, so old weeks you've hidden won't show up.
+- Merges and hidden columns are only kept in Excel (`.xlsx`) files. Google Sheets links are read as
+  CSV, which loses them, so for grid schedules it's best to download the sheet as `.xlsx` and upload it.
+
+See `examples/sample_grid_timeline.xlsx`.
+
+### List (one event per row)
+
+Use one row per event or milestone. Column names are detected automatically, and title rows above
+the header are fine. Any of these work:
 
 | Field | Required | Recognised headers |
 |---|---|---|

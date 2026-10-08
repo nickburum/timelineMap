@@ -16,7 +16,7 @@
     return host && path ? `${host[1]}/${path}` : "nickburum/timelineMap";
   }
 
-  const state = { rows: null, events: [], file: null, sourceLabel: "" };
+  const state = { sheets: null, events: [], file: null, sourceLabel: "" };
 
   function setStatus(el, msg, kind = "") {
     el.textContent = msg;
@@ -26,9 +26,12 @@
   function escapeHtml(s) {
     return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
-  // Render the small subset of Discord markdown we produce (**bold**, _italic_).
+  // Render the small subset of Discord markdown we produce (**bold**, __underline__, _italic_).
   function mdToHtml(md) {
-    return escapeHtml(md).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/(^|\s)_(.+?)_(?=\s|$)/g, "$1<em>$2</em>");
+    return escapeHtml(md)
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/^__(.+?)__$/gm, "<u>$1</u>")
+      .replace(/(^|\s)_(.+?)_(?=\s|$)/g, "$1<em>$2</em>");
   }
 
   function toISODate(d) {
@@ -36,10 +39,13 @@
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   }
 
-  function currentDigest() {
+  function asOfDate() {
     const [y, m, d] = $("asOf").value.split("-").map(Number);
-    const today = y ? new Date(y, m - 1, d) : new Date();
-    const digest = T.buildDigest(state.events, today, Number($("lookahead").value));
+    return y ? new Date(y, m - 1, d) : new Date();
+  }
+
+  function currentDigest() {
+    const digest = T.buildDigest(state.events, asOfDate(), Number($("lookahead").value));
     const project = $("project").value.trim();
     return {
       digest,
@@ -50,10 +56,9 @@
   }
 
   function render() {
-    if (!state.rows) return;
+    if (!state.sheets) return;
     try {
-      const parsed = T.parseEvents(state.rows, { dayFirst: $("dayFirst").checked });
-      state.events = parsed.events;
+      state.events = readEvents(state.sheets);
     } catch (err) {
       setStatus($("loadStatus"), err.message, "err");
       $("previewCard").classList.add("hidden");
@@ -78,8 +83,24 @@
       : `This timeline comes from a Google Sheets link. For weekly posts, add the link as the <code>TIMELINE_SOURCE</code> variable in the repo's GitHub settings (see the README).`;
   }
 
-  function loadRows(rows, label, file) {
-    state.rows = rows;
+  // First worksheet that reads as a timeline (list or weekly grid) wins.
+  function readEvents(sheets) {
+    const opts = { dayFirst: $("dayFirst").checked, today: asOfDate() };
+    let firstError = null;
+    for (const sh of sheets) {
+      try {
+        const { events } = T.parseSheet(sh.grid, sh.layout, opts);
+        if (events.length) return events;
+      } catch (err) {
+        firstError = firstError || err;
+      }
+    }
+    if (firstError) throw firstError;
+    return [];
+  }
+
+  function loadRows(sheets, label, file) {
+    state.sheets = sheets;
     state.file = file || null;
     state.sourceLabel = label;
     setStatus($("actionStatus"), "");
@@ -90,13 +111,26 @@
     }
   }
 
+  // Each visible worksheet as a raw grid plus its merged cells and hidden rows/columns,
+  // all indexed from cell A1 so they line up.
   function rowsFromWorkbook(wb) {
-    // Use the first sheet that has a recognisable date + name header.
-    for (const name of wb.SheetNames) {
-      const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: "", raw: true });
-      try { T.parseEvents(rows); return rows; } catch { /* try next sheet */ }
-    }
-    return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "", raw: true });
+    const visible = wb.SheetNames.filter((n, i) => !(wb.Workbook && wb.Workbook.Sheets && wb.Workbook.Sheets[i] &&
+      wb.Workbook.Sheets[i].Hidden));
+    return (visible.length ? visible : wb.SheetNames).map((name) => {
+      const ws = wb.Sheets[name];
+      if (!ws["!ref"]) return { name, grid: [], layout: {} };
+      const range = XLSX.utils.decode_range(ws["!ref"]);
+      const body = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: "", blankrows: true });
+      const grid = [];
+      body.forEach((row, i) => { grid[range.s.r + i] = Array(range.s.c).fill("").concat(row); });
+      for (let r = 0; r < grid.length; r++) if (!grid[r]) grid[r] = [];
+      const hiddenCols = new Set();
+      (ws["!cols"] || []).forEach((col, c) => { if (col && col.hidden) hiddenCols.add(c); });
+      const hiddenRows = new Set();
+      (ws["!rows"] || []).forEach((row, r) => { if (row && row.hidden) hiddenRows.add(r); });
+      const merges = (ws["!merges"] || []).map((m) => [m.s.r, m.s.c, m.e.r, m.e.c]);
+      return { name, grid, layout: { merges, hiddenRows, hiddenCols } };
+    });
   }
 
   async function handleFile(file) {
@@ -104,7 +138,7 @@
     setStatus($("loadStatus"), `Reading ${file.name}…`);
     try {
       const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array", cellDates: true });
+      const wb = XLSX.read(buf, { type: "array", cellDates: true, cellStyles: true });
       loadRows(rowsFromWorkbook(wb), file.name, { name: file.name, buffer: buf });
     } catch (err) {
       setStatus($("loadStatus"), `Couldn't read that file: ${err.message}`, "err");
@@ -119,7 +153,7 @@
       const ctype = resp.headers.get("Content-Type") || "";
       if (ctype.includes("text/html")) throw new Error("got a web page instead of a spreadsheet; check the sharing settings");
       const buf = await resp.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array", cellDates: true });
+      const wb = XLSX.read(buf, { type: "array", cellDates: true, cellStyles: true });
       return rowsFromWorkbook(wb);
     } catch (err) {
       setStatus($("loadStatus"), `Couldn't load ${label}: ${err.message}. ` +
@@ -237,7 +271,7 @@
       e.preventDefault();
       const resp = await fetch("sample_timeline.xlsx");
       const buf = await resp.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array", cellDates: true });
+      const wb = XLSX.read(buf, { type: "array", cellDates: true, cellStyles: true });
       loadRows(rowsFromWorkbook(wb), "the sample timeline", { name: "sample_timeline.xlsx", buffer: buf });
     });
 

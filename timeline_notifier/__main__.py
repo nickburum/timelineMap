@@ -13,9 +13,10 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from . import discord
-from .events import build_digest, parse_events
+from .events import build_digest
 from .formatter import render_plain
-from .loader import load_timeline
+from .grid import parse_sheet
+from .loader import load_sheets
 from .summarizer import ai_summary
 
 
@@ -63,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     project = os.environ.get("PROJECT_NAME", "").strip()
 
     try:
-        df = load_timeline(args.source, sheet_name=os.environ.get("SHEET_NAME") or None)
+        sheets = load_sheets(args.source, sheet_name=os.environ.get("SHEET_NAME") or None)
     except FileNotFoundError as exc:
         if os.path.isdir(args.source):  # nothing uploaded yet: skip quietly rather than fail every week
             logging.warning("%s Not posting.", exc)
@@ -73,7 +74,18 @@ def main(argv: list[str] | None = None) -> int:
         fld: os.environ.get(f"{fld.upper()}_COLUMN", "")
         for fld in ("name", "date", "end", "status", "owner", "category", "notes")
     }
-    events = parse_events(df, overrides, dayfirst=_env_flag("DAY_FIRST"))
+    events, error = None, None
+    for sheet in sheets:  # first worksheet that reads as a timeline wins
+        try:
+            events = parse_sheet(sheet, today, overrides, dayfirst=_env_flag("DAY_FIRST"))
+        except ValueError as exc:
+            error = error or exc
+            continue
+        if events:
+            logging.info("Reading worksheet %r", sheet.name or "1")
+            break
+    if events is None:
+        raise error
     digest = build_digest(events, today, lookahead, overdue_days)
     logging.info(
         "%d events loaded; this week=%d, later=%d, in progress=%d, overdue=%d",
