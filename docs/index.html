@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Timeline Notifier</title>
+  <meta name="description" content="Upload a timeline spreadsheet, preview upcoming events and post them to Discord.">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#5865f2">
+  <style>
+    :root {
+      --bg: #f5f6fa; --card: #ffffff; --text: #1d2130; --muted: #5d6478; --border: #dfe2ea;
+      --accent: #5865f2; --accent-text: #ffffff; --accent-soft: #eceefe;
+      --ok: #1f8a4c; --warn: #b4580d; --err: #c0392b; --code: #f0f1f5;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #14161d; --card: #1c1f29; --text: #e8eaf1; --muted: #a0a6b8; --border: #2e3240;
+        --accent: #7b86ff; --accent-text: #0f1120; --accent-soft: #262a45;
+        --ok: #4cc283; --warn: #f0a050; --err: #ff7b6e; --code: #252836;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    main { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+    h1 { font-size: 1.6rem; margin: 0 0 4px; }
+    h2 { font-size: 1.1rem; margin: 0 0 12px; }
+    .sub { color: var(--muted); margin: 0 0 24px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 20px; margin-bottom: 16px; }
+    .drop {
+      border: 2px dashed var(--border); border-radius: 12px; padding: 28px 16px; text-align: center;
+      transition: border-color .15s, background .15s;
+    }
+    .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+    .drop p { margin: 10px 0 0; color: var(--muted); font-size: .9rem; }
+    button, .btn {
+      font: inherit; font-weight: 600; border-radius: 10px; padding: 10px 16px; cursor: pointer;
+      border: 1px solid var(--border); background: var(--card); color: var(--text);
+      display: inline-flex; align-items: center; gap: 8px; text-decoration: none; min-height: 44px;
+    }
+    button.primary, .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+    button.big { font-size: 1.05rem; padding: 14px 22px; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    button:focus-visible, .btn:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .row > input[type="url"], .row > input[type="text"] { flex: 1 1 240px; }
+    input, select {
+      font: inherit; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border);
+      background: var(--bg); color: var(--text); min-height: 44px; width: 100%;
+    }
+    input[type="checkbox"] { width: auto; min-height: 0; }
+    label { display: block; font-weight: 600; font-size: .9rem; margin: 14px 0 6px; }
+    .hint { color: var(--muted); font-size: .85rem; margin: 6px 0 0; }
+    .or { text-align: center; color: var(--muted); margin: 16px 0; font-size: .9rem; }
+    .status { margin: 12px 0 0; font-size: .95rem; min-height: 1.5em; }
+    .status.ok { color: var(--ok); } .status.warn { color: var(--warn); } .status.err { color: var(--err); }
+    .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+    @media (max-width: 520px) { .controls { grid-template-columns: 1fr; } }
+    .preview {
+      background: var(--code); border-radius: 10px; padding: 16px; border-left: 4px solid var(--accent);
+      white-space: pre-wrap; overflow-wrap: anywhere; font-size: .95rem;
+    }
+    .preview .title { font-weight: 700; font-size: 1.05rem; display: block; margin-bottom: 10px; }
+    .preview .foot { color: var(--muted); font-size: .8rem; display: block; margin-top: 12px; }
+    details summary { cursor: pointer; font-weight: 600; }
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; margin-top: 12px; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .table-wrap { overflow-x: auto; }
+    .hidden { display: none !important; }
+    .actions { display: flex; flex-direction: column; gap: 10px; }
+    .actions .row button, .actions .row .btn { flex: 1 1 220px; justify-content: center; }
+    a { color: var(--accent); }
+    .status:empty { margin: 0; min-height: 0; }
+    code { background: var(--code); padding: 1px 6px; border-radius: 6px; font-size: .9em; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>🗓️ Timeline Notifier</h1>
+  <p class="sub">Upload your timeline, check what's coming up, and post it to Discord, now or every week.</p>
+
+  <section class="card" aria-labelledby="s1">
+    <h2 id="s1">1. Your timeline</h2>
+    <div class="drop" id="drop">
+      <input type="file" id="file" accept=".xlsx,.xls,.xlsm,.csv,.tsv" class="hidden">
+      <button class="primary big" id="uploadBtn" type="button">⬆️ Upload timeline</button>
+      <p>Excel (.xlsx) or CSV. You can also drag a file here.</p>
+    </div>
+    <div class="or">or use a Google Sheets link</div>
+    <div class="row">
+      <input type="url" id="sheetUrl" placeholder="https://docs.google.com/spreadsheets/d/…" aria-label="Google Sheets link">
+      <button type="button" id="loadSheet">Load</button>
+    </div>
+    <p class="hint">The sheet must be shared as <em>Anyone with the link → Viewer</em>.
+      No timeline yet? <a href="#" id="loadSample">Try the sample</a> or
+      <a href="sample_timeline.xlsx" download>download the template</a>.</p>
+    <p class="status" id="loadStatus" role="status"></p>
+  </section>
+
+  <section class="card hidden" id="previewCard" aria-labelledby="s2">
+    <h2 id="s2">2. Preview</h2>
+    <div class="controls">
+      <div>
+        <label for="asOf">Digest for the week of</label>
+        <input type="date" id="asOf">
+      </div>
+      <div>
+        <label for="lookahead">Look ahead</label>
+        <select id="lookahead">
+          <option value="7">7 days</option>
+          <option value="14" selected>14 days</option>
+          <option value="21">21 days</option>
+          <option value="30">30 days</option>
+        </select>
+      </div>
+    </div>
+    <label><input type="checkbox" id="dayFirst"> Dates are day-first (14/10/2026)</label>
+    <div class="preview" id="preview" aria-live="polite"></div>
+    <details style="margin-top:14px">
+      <summary id="allSummary">All events</summary>
+      <div class="table-wrap"><table id="allTable"></table></div>
+    </details>
+  </section>
+
+  <section class="card hidden" id="actionsCard" aria-labelledby="s3">
+    <h2 id="s3">3. Send it</h2>
+    <div class="actions">
+      <div class="row">
+        <button class="primary" type="button" id="postNow">📣 Post to Discord now</button>
+        <button type="button" id="saveWeekly">💾 Save for weekly posts</button>
+      </div>
+      <p class="hint" id="saveHint">"Save for weekly posts" stores this file in the repo's <code>timelines/</code> folder.
+        The automatic Monday post always uses the newest file there.</p>
+      <p class="status" id="actionStatus" role="status"></p>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="s4">
+    <details id="settings">
+      <summary id="s4">⚙️ Settings</summary>
+      <p class="hint">Saved only in this browser. Nothing here is stored in the public repo.</p>
+      <label for="webhook">Discord webhook URL</label>
+      <input type="url" id="webhook" placeholder="https://discord.com/api/webhooks/…" autocomplete="off">
+      <label for="project">Project name (optional)</label>
+      <input type="text" id="project" placeholder="e.g. Website relaunch">
+      <label for="ghToken">GitHub token (optional, for one-click saving)</label>
+      <input type="password" id="ghToken" placeholder="github_pat_…" autocomplete="off">
+      <p class="hint">Without a token, "Save for weekly posts" opens GitHub's upload page instead.
+        To create one: <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub → Fine-grained token</a>,
+        choose only this repository, and set <em>Contents</em> to <em>Read and write</em>.</p>
+      <label for="repo">Repository</label>
+      <input type="text" id="repo" placeholder="owner/repo">
+      <div class="row" style="margin-top:14px">
+        <button type="button" id="saveSettings" class="primary">Save settings</button>
+        <a class="btn" id="actionsLink" target="_blank" rel="noopener">▶️ Run weekly job now on GitHub</a>
+      </div>
+      <p class="status" id="settingsStatus" role="status"></p>
+    </details>
+  </section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="timeline.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

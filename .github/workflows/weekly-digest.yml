@@ -1,0 +1,47 @@
+name: Weekly timeline digest
+
+on:
+  schedule:
+    # Mondays at 13:07 UTC (≈ 9am US Eastern during DST). Cron is always UTC.
+    - cron: "7 13 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print the digest in the log instead of posting to Discord"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  models: read # lets the built-in GITHUB_TOKEN call the free GitHub Models API
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so we can tell which uploaded timeline is newest
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Post digest
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # Who writes the digest: github (free, default) | gemini | groq | claude | none (code only)
+          AI_PROVIDER: ${{ vars.AI_PROVIDER || 'github' }}
+          AI_MODEL: ${{ vars.AI_MODEL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TIMELINE_SOURCE: ${{ vars.TIMELINE_SOURCE || 'timelines' }}
+          PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+          TIMEZONE: ${{ vars.TIMEZONE || 'America/New_York' }}
+          LOOKAHEAD_DAYS: ${{ vars.LOOKAHEAD_DAYS || '14' }}
+          SKIP_IF_EMPTY: ${{ vars.SKIP_IF_EMPTY }}
+          DAY_FIRST: ${{ vars.DAY_FIRST }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: python -m timeline_notifier

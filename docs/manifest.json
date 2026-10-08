@@ -1,0 +1,9 @@
+{
+  "name": "Timeline Notifier",
+  "short_name": "Timeline",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f5f6fa",
+  "theme_color": "#5865f2",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
