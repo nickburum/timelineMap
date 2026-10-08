@@ -62,7 +62,13 @@ def main(argv: list[str] | None = None) -> int:
     overdue_days = int(os.environ.get("OVERDUE_DAYS", "30"))
     project = os.environ.get("PROJECT_NAME", "").strip()
 
-    df = load_timeline(args.source, sheet_name=os.environ.get("SHEET_NAME") or None)
+    try:
+        df = load_timeline(args.source, sheet_name=os.environ.get("SHEET_NAME") or None)
+    except FileNotFoundError as exc:
+        if os.path.isdir(args.source):  # nothing uploaded yet: skip quietly rather than fail every week
+            logging.warning("%s Not posting.", exc)
+            return 0
+        raise
     overrides = {
         fld: os.environ.get(f"{fld.upper()}_COLUMN", "")
         for fld in ("name", "date", "end", "status", "owner", "category", "notes")

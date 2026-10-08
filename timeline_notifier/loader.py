@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import re
+import subprocess
 from pathlib import Path
 
 import pandas as pd
@@ -11,6 +12,7 @@ import requests
 
 _GSHEET_RE = re.compile(r"docs\.google\.com/spreadsheets/d/([A-Za-z0-9_-]+)")
 _GID_RE = re.compile(r"[#?&]gid=(\d+)")
+SPREADSHEET_SUFFIXES = {".xlsx", ".xlsm", ".xls", ".csv", ".tsv"}
 
 
 def google_sheet_export_url(url: str) -> str | None:
@@ -29,9 +31,12 @@ def load_timeline(source: str, sheet_name: str | None = None) -> pd.DataFrame:
     """Read the timeline into a DataFrame with every cell as raw values.
 
     ``source`` may be a Google Sheets link (shared as "anyone with the link can
-    view"), an http(s) link to a .xlsx/.csv file, or a local .xlsx/.xls/.csv path.
+    view"), an http(s) link to a .xlsx/.csv file, a local .xlsx/.xls/.csv path, or
+    a folder (the newest spreadsheet in it is used).
     """
     source = source.strip()
+    if Path(source).is_dir():
+        source = str(newest_spreadsheet(Path(source)))
     if source.startswith(("http://", "https://")):
         export = google_sheet_export_url(source)
         resp = requests.get(export or source, timeout=60)
@@ -51,6 +56,26 @@ def load_timeline(source: str, sheet_name: str | None = None) -> pd.DataFrame:
     if path.suffix.lower() in {".csv", ".tsv"}:
         return pd.read_csv(path, sep="\t" if path.suffix.lower() == ".tsv" else ",")
     return pd.read_excel(path, sheet_name=sheet_name or 0)
+
+
+def newest_spreadsheet(folder: Path) -> Path:
+    """Pick the most recently committed (or, outside git, modified) spreadsheet in ``folder``."""
+    files = [f for f in folder.iterdir() if f.is_file() and f.suffix.lower() in SPREADSHEET_SUFFIXES
+             and not f.name.startswith(("~$", "."))]
+    if not files:
+        raise FileNotFoundError(f"No timeline spreadsheet in {folder}/ yet. Upload one with the Upload timeline page.")
+    return max(files, key=lambda f: (_commit_time(f), f.stat().st_mtime, f.name))
+
+
+def _commit_time(path: Path) -> int:
+    try:
+        out = subprocess.run(
+            ["git", "log", "-1", "--format=%ct", "--", path.name],
+            cwd=path.parent, capture_output=True, text=True, timeout=10,
+        )
+        return int(out.stdout.strip() or 0)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return 0
 
 
 def _looks_like_csv(resp: requests.Response) -> bool:

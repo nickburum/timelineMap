@@ -8,6 +8,25 @@ weekly digest to a Discord channel through a webhook. You choose who writes the 
   summary of what matters this week and flags risks and deadline clusters.
 - **Claude** (paid): the same kind of summary, written by Anthropic's Claude.
 
+## 🌐 Open the app
+
+**https://nickburum.github.io/timelineMap/**
+
+Works in any browser on a phone or computer. **Upload timeline** reads your Excel or CSV file (or a Google
+Sheets link) and shows a preview of the digest. From there:
+- **Post to Discord now** sends the preview straight to your channel.
+- **Save for weekly posts** stores the file in this repo's `timelines/` folder. The automatic Monday
+  post always uses the newest file there.
+
+The first time you open the app, paste your Discord webhook URL in **⚙️ Settings**. It's saved only in
+your browser, never in this public repo. To save a timeline in one click, also add a GitHub token there
+(a fine-grained token for this repository only, with *Contents: Read and write*). Without a token,
+the save button opens GitHub's upload page instead.
+
+**One-time setup to turn the link on:** in this repo, open **Settings → Pages**, choose
+**Deploy from a branch**, then branch `main` and folder `/docs`, and click **Save**. The link starts
+working about a minute later.
+
 Each digest has four sections:
 
 | Section | What goes in it |
@@ -35,7 +54,9 @@ If your headers are different, set `DATE_COLUMN`, `NAME_COLUMN`, and so on. Date
 spreadsheet dates or text like `2026-10-14` or `10/14/2026`. For day-first dates such as `14/10/2026`,
 set `DAY_FIRST=true`. See `examples/sample_timeline.xlsx` for a working sheet.
 
-**Where the timeline can live** (`TIMELINE_SOURCE`):
+**Where the timeline can live** (`TIMELINE_SOURCE`, default `timelines`):
+- **The `timelines/` folder (default):** upload files with the app, or with GitHub's
+  **Add file → Upload files**. The newest file is used.
 - **Google Sheets:** paste the normal sheet link. In Google Sheets, open **Share → General access**
   and set it to **Anyone with the link → Viewer**. To use a tab other than the first, copy the link
   while that tab is open; the link then includes `#gid=…`.
@@ -48,7 +69,8 @@ set `DAY_FIRST=true`. See `examples/sample_timeline.xlsx` for a working sheet.
 1. In GitHub, open **Settings → Secrets and variables → Actions** for this repo.
 2. Under **Secrets**, add `DISCORD_WEBHOOK_URL`: your Discord webhook URL.
 3. Under **Variables**, add:
-   - `TIMELINE_SOURCE`: your Google Sheets link or file path
+   - `TIMELINE_SOURCE` (optional): a Google Sheets link or file path. Leave it unset to use the newest
+     file in `timelines/`. If it's set, it overrides the uploaded files.
    - optionally `AI_PROVIDER` (see the next section; default `github`), `PROJECT_NAME`,
      `TIMEZONE` (default `America/New_York`), `LOOKAHEAD_DAYS`, `SKIP_IF_EMPTY`, `DAY_FIRST`
 4. Open **Actions → Weekly timeline digest → Run workflow**. Tick *dry run* to preview the digest in

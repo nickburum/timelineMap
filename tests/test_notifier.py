@@ -130,3 +130,25 @@ def test_free_provider_request_and_fallback(monkeypatch):
     assert summarizer.ai_summary(_sample_digest(), provider="gemini") is None
     monkeypatch.setattr(summarizer.requests, "post", lambda url, **kw: (_ for _ in ()).throw(ConnectionError("down")))
     assert summarizer.ai_summary(_sample_digest(), provider="github") is None
+
+
+def test_folder_source_uses_newest_spreadsheet(tmp_path, monkeypatch):
+    import os
+    import shutil
+
+    from timeline_notifier.loader import load_timeline, newest_spreadsheet
+
+    old = tmp_path / "old.csv"
+    old.write_text("Event,Date\nOld thing,2026-10-08\n")
+    new = tmp_path / "new.xlsx"
+    shutil.copy(Path(__file__).parent.parent / "examples" / "sample_timeline.xlsx", new)
+    (tmp_path / "README.md").write_text("not a spreadsheet")
+    os.utime(old, (1, 1))
+    assert newest_spreadsheet(tmp_path) == new
+    assert "Prototype demo" in set(load_timeline(str(tmp_path))["Milestone"])
+
+
+def test_empty_folder_skips_without_posting(tmp_path, monkeypatch):
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.test/webhook")
+    monkeypatch.setattr(discord.requests, "post", lambda *a, **k: pytest.fail("should not post"))
+    assert main(["--source", str(tmp_path)]) == 0

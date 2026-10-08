@@ -20,6 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so we can tell which uploaded timeline is newest
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -35,7 +37,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          TIMELINE_SOURCE: ${{ vars.TIMELINE_SOURCE || 'examples/sample_timeline.xlsx' }}
+          TIMELINE_SOURCE: ${{ vars.TIMELINE_SOURCE || 'timelines' }}
           PROJECT_NAME: ${{ vars.PROJECT_NAME }}
           TIMEZONE: ${{ vars.TIMEZONE || 'America/New_York' }}
           LOOKAHEAD_DAYS: ${{ vars.LOOKAHEAD_DAYS || '14' }}
